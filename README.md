@@ -9,7 +9,7 @@ From this directory, install the dependency and start the app:
 
 ```powershell
 py -m pip install -r requirements.txt
-py -m streamlit run main.py
+py -m streamlit run streamlit_app.py
 ```
 
 The menu is read from `menu.txt`. Burger prices are $2 for single, $4 for
@@ -19,7 +19,7 @@ Condiments and toppings are included in the burger price.
 ## Deploy on Streamlit Community Cloud
 
 Create a Community Cloud app from this GitHub repository, select the `main`
-branch, and set `main.py` as the app's entry point. Community Cloud installs
+branch, and set `streamlit_app.py` as the app's entry point. Community Cloud installs
 the dependency from `requirements.txt`.
 
 Confirmed orders are appended as JSON Lines to `orders.jsonl`; the existing
