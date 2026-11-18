@@ -11,6 +11,12 @@ ORDERS_PATH = Path(__file__).with_name("orders.jsonl")
 PICKUP_ADDRESS = "Placeholder — awaiting LAC Burgers' verified Chicago address."
 RESTAURANT_HOURS = "Placeholder — awaiting confirmed weekly hours."
 PICKUP_ESTIMATE_MINUTES = 20
+TOPPING_PRICE_CENTS = 25
+DELIVERY_FEE_CENTS_PER_ITEM = 300
+PICKUP = "Pickup"
+DELIVERY = "Delivery"
+PAY_AT_PICKUP = "Pay at pickup"
+PAY_ON_DELIVERY = "Pay on delivery"
 MENU_CATEGORIES = (
     "SIZES",
     "CHEESES",
@@ -21,7 +27,6 @@ MENU_CATEGORIES = (
 )
 BURGER_PRICES = {"single": 2, "double": 4, "triple": 8}
 DRINK_PRICES = {"small": 1, "medium": 2, "large": 3}
-PAY_AT_PICKUP = "Pay at pickup"
 TEST_PAYMENT = "Test online payment (no charge)"
 ORDER_FIELDS = (
     "order_id",
@@ -118,14 +123,27 @@ def save_order(order: dict) -> None:
         order_file.write(json.dumps(order, ensure_ascii=False) + "\n")
 
 
-def money(amount: int) -> str:
-    return f"${amount:.2f}"
+def money_cents(amount: int) -> str:
+    return f"${amount // 100}.{amount % 100:02d}"
 
 
-def item_total(item: dict) -> int:
-    return BURGER_PRICES[item["size"].lower()] + DRINK_PRICES[
-        item["drink_size"].lower()
-    ]
+def order_total_cents(order: dict) -> int:
+    if "total_cents" in order:
+        return int(order["total_cents"])
+    return round(float(order["total"]) * 100)
+
+
+def item_total_cents(item: dict) -> int:
+    burger_cents = BURGER_PRICES[item["size"].lower()] * 100
+    drink_cents = DRINK_PRICES[item["drink_size"].lower()] * 100
+    topping_cents = len(item["toppings"]) * TOPPING_PRICE_CENTS
+    return burger_cents + drink_cents + topping_cents
+
+
+def delivery_total_cents(order: dict) -> int:
+    if order.get("fulfillment_method") == DELIVERY:
+        return len(order_items(order)) * DELIVERY_FEE_CENTS_PER_ITEM
+    return 0
 
 
 def order_items(order: dict) -> list[dict]:
@@ -138,12 +156,17 @@ def order_summary(order: dict) -> None:
     for index, item in enumerate(order_items(order), start=1):
         st.write(
             f"**Burger {index}: {item['size'].title()}** with {item['cheese']} "
-            f"· {money(item_total(item))}"
+            f"· {money_cents(item_total_cents(item))}"
         )
         st.write(f"**Drink:** {item['drink'].title()} ({item['drink_size']})")
         st.write(f"**Condiments:** {', '.join(item['condiments']) or 'None'}")
         st.write(f"**Toppings:** {', '.join(item['toppings']) or 'None'}")
-    st.write("All condiments and toppings are included.")
+        if item["toppings"]:
+            st.caption(
+                f"Topping charge: {len(item['toppings'])} × "
+                f"{money_cents(TOPPING_PRICE_CENTS)}"
+            )
+    st.write("Condiments are included. Each selected topping costs $0.25.")
 
 
 def add_item_to_cart(menu: dict[str, list[str]]) -> None:
@@ -178,6 +201,24 @@ def render_order_form(menu: dict[str, list[str]]) -> None:
         help="Used to look up your recent orders.",
         max_chars=24,
     )
+    fulfillment_method = st.radio(
+        "How would you like your order?",
+        [PICKUP, DELIVERY],
+        key="fulfillment_method",
+        horizontal=True,
+    )
+    delivery_address = ""
+    if fulfillment_method == DELIVERY:
+        delivery_address = st.text_area(
+            "Delivery address",
+            key="delivery_address",
+            max_chars=300,
+            help="Enter the complete Chicago delivery address, including apartment or unit if needed.",
+        )
+        st.caption(
+            "Delivery coverage and timing are not yet verified by the app. "
+            "Confirm that your address is serviceable with LAC Burgers."
+        )
 
     st.subheader("Build a burger")
     size = st.selectbox("Burger size", menu["SIZES"], key="size")
@@ -215,7 +256,12 @@ def render_order_form(menu: dict[str, list[str]]) -> None:
         "drink": drink,
         "drink_size": drink_size,
     }
-    st.markdown(f"**This burger and drink: {money(item_total(current_item))}**")
+    current_total = item_total_cents(current_item)
+    st.markdown(
+        f"**This burger and drink: {money_cents(current_total)}** "
+        f"(includes {money_cents(len(toppings) * TOPPING_PRICE_CENTS)} "
+        "for toppings)"
+    )
     st.button("Add burger to cart", on_click=add_item_to_cart, args=(menu,))
 
     cart = st.session_state.setdefault("cart", [])
@@ -229,7 +275,7 @@ def render_order_form(menu: dict[str, list[str]]) -> None:
         st.write(
             f"**{index + 1}. {item['size'].title()} burger + "
             f"{item['drink_size'].title()} {item['drink'].title()}** "
-            f"— {money(item_total(item))}"
+            f"— {money_cents(item_total_cents(item))}"
         )
         st.caption(
             f"{item['cheese'].title()} cheese · "
@@ -240,8 +286,20 @@ def render_order_form(menu: dict[str, list[str]]) -> None:
             cart.pop(index)
             st.rerun()
 
-    cart_total = sum(item_total(item) for item in cart)
-    st.markdown(f"### Current total: {money(cart_total)}")
+    cart_items_total = sum(item_total_cents(item) for item in cart)
+    delivery_fee = (
+        len(cart) * DELIVERY_FEE_CENTS_PER_ITEM
+        if fulfillment_method == DELIVERY
+        else 0
+    )
+    if delivery_fee:
+        st.write(
+            f"Delivery fee: {len(cart)} × "
+            f"{money_cents(DELIVERY_FEE_CENTS_PER_ITEM)} = "
+            f"{money_cents(delivery_fee)}"
+        )
+    cart_total = cart_items_total + delivery_fee
+    st.markdown(f"### Current total: {money_cents(cart_total)}")
     if st.button("Review order", type="primary"):
         customer_name = name.strip()
         customer_phone = normalize_phone(phone)
@@ -249,12 +307,21 @@ def render_order_form(menu: dict[str, list[str]]) -> None:
             st.error("Enter your name to continue.")
         elif not 7 <= len(customer_phone) <= 15:
             st.error("Enter a valid phone number with 7 to 15 digits.")
+        elif fulfillment_method == DELIVERY and not delivery_address.strip():
+            st.error("Enter a delivery address to continue.")
         else:
             st.session_state.draft_order = {
                 "name": customer_name,
                 "phone": customer_phone,
                 "items": [dict(item) for item in cart],
-                "total": cart_total,
+                "total": cart_total / 100,
+                "total_cents": cart_total,
+                "fulfillment_method": fulfillment_method,
+                "delivery_address": (
+                    delivery_address.strip()
+                    if fulfillment_method == DELIVERY
+                    else ""
+                ),
             }
             st.session_state.order_stage = "review"
             st.rerun()
@@ -269,13 +336,30 @@ def render_review() -> None:
     st.subheader("Price breakdown")
     for index, item in enumerate(order_items(order), start=1):
         st.write(
-            f"Burger {index} and {item['drink_size']} drink: "
-            f"{money(item_total(item))}"
+            f"Burger {index} and {item['drink_size']} drink"
+            f" ({len(item['toppings'])} topping"
+            f"{'' if len(item['toppings']) == 1 else 's'}): "
+            f"{money_cents(item_total_cents(item))}"
         )
-    st.markdown(f"### Total: {money(order['total'])}")
+    delivery_fee = delivery_total_cents(order)
+    if delivery_fee:
+        st.write(
+            f"Delivery fee ({len(order_items(order))} × "
+            f"{money_cents(DELIVERY_FEE_CENTS_PER_ITEM)}): "
+            f"{money_cents(delivery_fee)}"
+        )
+    st.markdown(f"### Total: {money_cents(order_total_cents(order))}")
+    st.write(f"**Fulfillment:** {order.get('fulfillment_method', PICKUP)}")
+    if order.get("fulfillment_method") == DELIVERY:
+        st.write(f"**Delivery address:** {order['delivery_address']}")
+    in_person_payment = (
+        PAY_ON_DELIVERY
+        if order.get("fulfillment_method") == DELIVERY
+        else PAY_AT_PICKUP
+    )
     payment_choice = st.radio(
         "Payment option",
-        [PAY_AT_PICKUP, TEST_PAYMENT],
+        [in_person_payment, TEST_PAYMENT],
         key="payment_choice",
         help="Test payment only simulates success. It does not collect card details or charge money.",
     )
@@ -285,11 +369,14 @@ def render_review() -> None:
             "simulated paid. No payment is processed and no charge is made."
         )
     else:
-        st.info("Payment is due at pickup. No online payment is collected.")
-    st.caption(
-        f"Estimated pickup is about {PICKUP_ESTIMATE_MINUTES} minutes after "
-        "confirmation. Actual timing may vary."
-    )
+        st.info(f"Payment is due in person ({in_person_payment.lower()}).")
+    if order.get("fulfillment_method") != DELIVERY:
+        st.caption(
+            f"Estimated pickup is about {PICKUP_ESTIMATE_MINUTES} minutes after "
+            "confirmation. Actual timing may vary."
+        )
+    else:
+        st.caption("Delivery timing is not available in the app; please confirm it with the restaurant.")
 
     edit_column, confirm_column = st.columns(2)
     with edit_column:
@@ -306,21 +393,35 @@ def render_review() -> None:
             ordered_at = datetime.now().astimezone()
             confirmed_order = {
                 **order,
+                "total": order_total_cents(order) / 100,
+                "total_cents": order_total_cents(order),
                 "payment_method": (
                     "test_online"
                     if payment_choice == TEST_PAYMENT
-                    else "pay_at_pickup"
+                    else (
+                        "pay_on_delivery"
+                        if order.get("fulfillment_method") == DELIVERY
+                        else "pay_at_pickup"
+                    )
                 ),
                 "payment_status": (
                     "simulated_paid"
                     if payment_choice == TEST_PAYMENT
-                    else "due_at_pickup"
+                    else (
+                        "due_at_delivery"
+                        if order.get("fulfillment_method") == DELIVERY
+                        else "due_at_pickup"
+                    )
                 ),
                 "order_id": uuid.uuid4().hex[:8].upper(),
                 "ordered_at": ordered_at.isoformat(),
                 "pickup_at": (
-                    ordered_at + timedelta(minutes=PICKUP_ESTIMATE_MINUTES)
-                ).isoformat(),
+                    (
+                        ordered_at + timedelta(minutes=PICKUP_ESTIMATE_MINUTES)
+                    ).isoformat()
+                    if order.get("fulfillment_method") != DELIVERY
+                    else ""
+                ),
             }
             try:
                 save_order(confirmed_order)
@@ -337,19 +438,28 @@ def render_confirmation() -> None:
     st.success("Your order is confirmed.")
     st.markdown(f"### Order {order['order_id']}")
     order_summary(order)
-    st.markdown(f"### Total: {money(order['total'])}")
+    st.markdown(f"### Total: {money_cents(order_total_cents(order))}")
     if order.get("payment_status") == "simulated_paid":
         st.success("Test payment successful. No charge was made.")
+    elif order.get("fulfillment_method") == DELIVERY:
+        st.info("Payment is due on delivery.")
     else:
         st.info("Payment is due at pickup.")
-    st.write(
-        "**Estimated pickup (may vary):** "
-        + datetime.fromisoformat(order["pickup_at"]).strftime("%I:%M %p %Z")
-    )
-    st.info(
-        "Please confirm the pickup location and current hours with LAC Burgers "
-        "before traveling; those details are placeholders."
-    )
+    if order.get("fulfillment_method") == DELIVERY:
+        st.write(f"**Delivery address:** {order['delivery_address']}")
+        st.caption("Please confirm delivery timing and coverage with the restaurant.")
+    elif order.get("pickup_at"):
+        st.write(
+            "**Estimated pickup (may vary):** "
+            + datetime.fromisoformat(order["pickup_at"]).strftime("%I:%M %p %Z")
+        )
+    if order.get("fulfillment_method") == DELIVERY:
+        st.info("Delivery coverage and timing are not verified; confirm them with LAC Burgers.")
+    else:
+        st.info(
+            "Please confirm the pickup location and current hours with LAC Burgers "
+            "before traveling; those details are placeholders."
+        )
 
     if st.button("Start another order"):
         for key in (
@@ -359,6 +469,7 @@ def render_confirmation() -> None:
             "cheese",
             "drink",
             "drink_size",
+            "delivery_address",
         ):
             st.session_state.pop(key, None)
         for key in list(st.session_state):
@@ -367,6 +478,7 @@ def render_confirmation() -> None:
         st.session_state.order_stage = "build"
         st.session_state.cart = []
         st.session_state.pop("payment_choice", None)
+        st.session_state.pop("fulfillment_method", None)
         st.session_state.pop("draft_order", None)
         st.session_state.pop("confirmed_order", None)
         st.rerun()
@@ -409,9 +521,17 @@ def render_recent_orders() -> None:
 
     for order in recent_orders:
         with st.container(border=True):
-            st.markdown(f"**Order {order['order_id']} · {money(order['total'])}**")
+            st.markdown(
+                f"**Order {order['order_id']} · "
+                f"{money_cents(order_total_cents(order))}**"
+            )
+            st.caption(
+                f"Fulfillment: {order.get('fulfillment_method', PICKUP)}"
+            )
             if order.get("payment_status") == "simulated_paid":
                 st.caption("Test payment (simulated; no charge)")
+            elif order.get("payment_status") == "due_at_delivery":
+                st.caption("Payment due on delivery")
             elif order.get("payment_status") == "due_at_pickup":
                 st.caption("Payment due at pickup")
             st.caption(
@@ -440,13 +560,14 @@ def main() -> None:
         unsafe_allow_html=True,
     )
     st.title("LAC Burgers")
-    st.write("Build your burgers, review your order, and pay at pickup.")
+    st.write("Build your burgers, choose pickup or delivery, and review your order.")
     st.info(
-        f"**Pickup address:** {PICKUP_ADDRESS}\n\n"
+        f"**Restaurant / pickup address:** {PICKUP_ADDRESS}\n\n"
         f"**Restaurant hours:** {RESTAURANT_HOURS}\n\n"
         f"Pickup estimate: about {PICKUP_ESTIMATE_MINUTES} minutes after "
         "confirmation; actual timing may vary. This estimate does not check "
-        "opening hours or live kitchen capacity, and no pickup time is reserved."
+        "opening hours or live kitchen capacity, and no pickup time is reserved. "
+        "Delivery service coverage and timing are not yet verified."
     )
     st.sidebar.info(
         "Demo storage: order history is kept in a local text file and may be "
