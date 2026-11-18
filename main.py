@@ -21,6 +21,8 @@ MENU_CATEGORIES = (
 )
 BURGER_PRICES = {"single": 2, "double": 4, "triple": 8}
 DRINK_PRICES = {"small": 1, "medium": 2, "large": 3}
+PAY_AT_PICKUP = "Pay at pickup"
+TEST_PAYMENT = "Test online payment (no charge)"
 ORDER_FIELDS = (
     "order_id",
     "ordered_at",
@@ -271,7 +273,19 @@ def render_review() -> None:
             f"{money(item_total(item))}"
         )
     st.markdown(f"### Total: {money(order['total'])}")
-    st.info("Payment is due at pickup. No online payment is collected.")
+    payment_choice = st.radio(
+        "Payment option",
+        [PAY_AT_PICKUP, TEST_PAYMENT],
+        key="payment_choice",
+        help="Test payment only simulates success. It does not collect card details or charge money.",
+    )
+    if payment_choice == TEST_PAYMENT:
+        st.warning(
+            "Test mode only: choosing this option will mark the order as "
+            "simulated paid. No payment is processed and no charge is made."
+        )
+    else:
+        st.info("Payment is due at pickup. No online payment is collected.")
     st.caption(
         f"Estimated pickup is about {PICKUP_ESTIMATE_MINUTES} minutes after "
         "confirmation. Actual timing may vary."
@@ -283,10 +297,25 @@ def render_review() -> None:
             st.session_state.order_stage = "build"
             st.rerun()
     with confirm_column:
-        if st.button("Confirm and place order", type="primary"):
+        button_label = (
+            "Simulate test payment and place order"
+            if payment_choice == TEST_PAYMENT
+            else "Confirm and place order"
+        )
+        if st.button(button_label, type="primary"):
             ordered_at = datetime.now().astimezone()
             confirmed_order = {
                 **order,
+                "payment_method": (
+                    "test_online"
+                    if payment_choice == TEST_PAYMENT
+                    else "pay_at_pickup"
+                ),
+                "payment_status": (
+                    "simulated_paid"
+                    if payment_choice == TEST_PAYMENT
+                    else "due_at_pickup"
+                ),
                 "order_id": uuid.uuid4().hex[:8].upper(),
                 "ordered_at": ordered_at.isoformat(),
                 "pickup_at": (
@@ -309,13 +338,17 @@ def render_confirmation() -> None:
     st.markdown(f"### Order {order['order_id']}")
     order_summary(order)
     st.markdown(f"### Total: {money(order['total'])}")
+    if order.get("payment_status") == "simulated_paid":
+        st.success("Test payment successful. No charge was made.")
+    else:
+        st.info("Payment is due at pickup.")
     st.write(
         "**Estimated pickup (may vary):** "
         + datetime.fromisoformat(order["pickup_at"]).strftime("%I:%M %p %Z")
     )
     st.info(
-        "Pay at pickup. Please confirm the pickup location and current hours "
-        "with LAC Burgers before traveling; those details are placeholders."
+        "Please confirm the pickup location and current hours with LAC Burgers "
+        "before traveling; those details are placeholders."
     )
 
     if st.button("Start another order"):
@@ -333,6 +366,7 @@ def render_confirmation() -> None:
                 st.session_state.pop(key, None)
         st.session_state.order_stage = "build"
         st.session_state.cart = []
+        st.session_state.pop("payment_choice", None)
         st.session_state.pop("draft_order", None)
         st.session_state.pop("confirmed_order", None)
         st.rerun()
@@ -376,6 +410,10 @@ def render_recent_orders() -> None:
     for order in recent_orders:
         with st.container(border=True):
             st.markdown(f"**Order {order['order_id']} · {money(order['total'])}**")
+            if order.get("payment_status") == "simulated_paid":
+                st.caption("Test payment (simulated; no charge)")
+            elif order.get("payment_status") == "due_at_pickup":
+                st.caption("Payment due at pickup")
             st.caption(
                 datetime.fromisoformat(order["ordered_at"]).strftime(
                     "%b %d, %Y at %I:%M %p %Z"

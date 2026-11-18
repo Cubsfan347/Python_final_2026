@@ -1,7 +1,8 @@
 # LAC Burgers
 
 A Streamlit burger-ordering demo with live item pricing, a multi-burger cart,
-editable order review, pay-at-pickup confirmation, and recent-order lookup.
+editable order review, pay-at-pickup or simulated test-payment confirmation,
+and recent-order lookup.
 
 ## Run locally
 
@@ -25,6 +26,15 @@ before publishing. Pickup is estimated at about 20 minutes after order
 confirmation; this is not a live kitchen availability estimate, so customers
 are told that timing may vary.
 
+## Payment options
+
+The app supports pay-at-pickup and a **test-only simulated payment** option.
+The test option does not collect card details, connect to a payment provider,
+or charge money; it only records a simulated-paid status on the order. It is
+for exercising the UI and is not suitable for accepting real online payments.
+Real payments require integration with a payment provider and verified
+server-side payment confirmation.
+
 ## Deploy on Streamlit Community Cloud
 
 Create a Community Cloud app from this GitHub repository, select the `main`
@@ -35,5 +45,5 @@ Confirmed orders are appended as JSON Lines to `orders.jsonl`; the existing
 `orders.txt` and `customer_list.txt` files are left untouched because they
 contain legacy command-line data. This file-based storage is intended for a
 demo. Streamlit Community Cloud does not guarantee local files will persist
-across redeployments, and the app does not process online payments. Use a
-persistent database before using the app for real customer orders.
+across redeployments. Use a persistent database and a real payment-provider
+integration before using the app for real customer orders or payments.
